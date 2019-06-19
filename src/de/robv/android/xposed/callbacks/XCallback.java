@@ -1,10 +1,11 @@
 package de.robv.android.xposed.callbacks;
 
 import java.io.Serializable;
+import java.util.Iterator;
+import java.util.TreeSet;
 
 import android.os.Bundle;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedBridge.CopyOnWriteSortedSet;
 
 public abstract class XCallback implements Comparable<XCallback> {
 	public final int priority;
@@ -14,44 +15,41 @@ public abstract class XCallback implements Comparable<XCallback> {
 	public XCallback(int priority) {
 		this.priority = priority;
 	}
-
+	
 	public static class Param {
-		public final Object[] callbacks;
-		private Bundle extra;
-
-		protected Param() {
-			callbacks = null;
-		}
-
-		protected Param(CopyOnWriteSortedSet<? extends XCallback> callbacks) {
-			this.callbacks = callbacks.getSnapshot();
-		}
-
+		public final TreeSet<? extends XCallback> callbacks;
 		/**
 		 * This can be used to store anything for the scope of the callback.
 		 * Use this instead of instance variables.
 		 * @see #getObjectExtra
 		 * @see #setObjectExtra
 		 */
-		public synchronized Bundle getExtra() {
-			if (extra == null)
-				extra = new Bundle();
-			return extra;
+		public final Bundle extra = new Bundle();
+		
+		protected Param() {
+			callbacks = null;
 		}
-
+		
+		@SuppressWarnings("unchecked")
+		protected Param(TreeSet<? extends XCallback> callbacks) {
+			synchronized (callbacks) {
+				this.callbacks = (TreeSet<? extends XCallback>) callbacks.clone();
+			}
+		}
+		
 		/** @see #setObjectExtra */
 		public Object getObjectExtra(String key) {
-			Serializable o = getExtra().getSerializable(key);
+			Serializable o = extra.getSerializable(key);
 			if (o instanceof SerializeWrapper)
 				return ((SerializeWrapper) o).object;
 			return null;
 		}
-
+		
 		/** Provides a wrapper to store <code>Object</code>s in <code>extra</code>. */
 		public void setObjectExtra(String key, Object o) {
-			getExtra().putSerializable(key, new SerializeWrapper(o));
+			extra.putSerializable(key, new SerializeWrapper(o));
 		}
-
+		
 		private static class SerializeWrapper implements Serializable {
 			private static final long serialVersionUID = 1L;
 			private Object object;
@@ -60,25 +58,26 @@ public abstract class XCallback implements Comparable<XCallback> {
 			}
 		}
 	}
-
+	
 	public static final void callAll(Param param) {
 		if (param.callbacks == null)
 			throw new IllegalStateException("This object was not created for use with callAll");
-
-		for (int i = 0; i < param.callbacks.length; i++) {
+		
+		Iterator<? extends XCallback> it = param.callbacks.iterator();
+		while (it.hasNext()) {
 			try {
-				((XCallback) param.callbacks[i]).call(param);
+				it.next().call(param);
 			} catch (Throwable t) { XposedBridge.log(t); }
 		}
 	}
-
+	
 	protected void call(Param param) throws Throwable {};
-
+	
 	@Override
 	public int compareTo(XCallback other) {
 		if (this == other)
 			return 0;
-
+		
 		// order descending by priority
 		if (other.priority != this.priority)
 			return other.priority - this.priority;
@@ -88,7 +87,7 @@ public abstract class XCallback implements Comparable<XCallback> {
 		else
 			return 1;
 	}
-
+	
 	public static final int PRIORITY_DEFAULT = 50;
 	/** Call this handler last */
 	public static final int PRIORITY_LOWEST = -10000;
